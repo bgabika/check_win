@@ -1,8 +1,7 @@
 
 # check_win
 
-COREX Windows host agentless check plugin for Icinga 2
-version: v1.14
+COREX Windows host agentless check plugin for Icinga 2, v1.14
  
 ### Features
  - checks Windows host over SSH
