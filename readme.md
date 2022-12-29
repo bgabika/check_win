@@ -2,6 +2,7 @@
 # check_win
 
 COREX Windows host agentless check plugin for Icinga 2
+version: v1.14
  
 ### Features
  - checks Windows host over SSH
@@ -32,7 +33,7 @@ OK - D (backup) drive usage is 0.26 % (0.13 GB / 50.0 GB).                    |D
 
 ### Version
 
- - 1.14
+ - v1.14
 
 ### ToDo
 
@@ -40,6 +41,6 @@ OK - D (backup) drive usage is 0.26 % (0.13 GB / 50.0 GB).                    |D
 
 ## Changelog
 
- - version 1.14: add new feature: disk-io. Checks disk I/O usage and most disk-IO usage processes.
+ - version v1.14: add new feature: disk-io. Checks disk I/O usage and most disk-IO usage processes.
  - [initial release] version 1.13
 
