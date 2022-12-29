@@ -6,7 +6,7 @@ COREX Windows host agentless check plugin for Icinga 2
 ### Features
  - checks Windows host over SSH
  - prints performance data for Icinga 2 Graphite Module ( and other solutions like Graphite )
- - available subcommands: cpu, disk-health, disk-usage, memory, network, procs, swap, user-logged-on, user-count, winfo
+ - available subcommands: cpu, disk-health, disk-io, disk-usage, memory, network, procs, swap, user-logged-on, user-count, winfo
  - warning/critical thresholds for each separate subcommands
  - for more details run check_win.py --help
 
@@ -32,7 +32,7 @@ OK - D (backup) drive usage is 0.26 % (0.13 GB / 50.0 GB).                    |D
 
 ### Version
 
- - 1.13
+ - 1.14
 
 ### ToDo
 
@@ -40,5 +40,6 @@ OK - D (backup) drive usage is 0.26 % (0.13 GB / 50.0 GB).                    |D
 
 ## Changelog
 
+ - version 1.14: add new feature: disk-io. Checks disk I/O usage and most disk-IO usage processes.
  - [initial release] version 1.13
 
