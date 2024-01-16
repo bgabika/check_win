@@ -4,7 +4,7 @@
 # COREX Windows host agentless check plugin for Icinga 2
 # Copyright (C) 2019-2022, Gabor Borsos <bg@corex.bg>
 # 
-# v1.15 built on 2023.03.19.
+# v1.16 built on 2024.01.16.
 # usage: check_win.py --help
 #
 # For bugs and feature requests mailto bg@corex.bg
@@ -302,7 +302,7 @@ class CheckWin:
 
 
     def check_disk_io(self, perfdata, subcommand):
-
+        
         disk_io_details = perfdata.splitlines()
         disk_io_details_list = list(filter(None, disk_io_details))
         disk_io_usage_list = disk_io_details_list[0]
@@ -322,7 +322,11 @@ class CheckWin:
                 disk_io_app_usage_split_list = disk_io_app_usage.split(" ")
                 disk_io_app_usage_split_list = list(filter(None,disk_io_app_usage_split_list))
 
-                disk_io_app_usage_dict[disk_io_app_usage_split_list[0]] = int(disk_io_app_usage_split_list[1])
+                if len(disk_io_app_usage_split_list) > 2:
+                    joined_service_name = ' '.join(disk_io_app_usage_split_list[:-1])
+                    disk_io_app_usage_dict[joined_service_name] = int(disk_io_app_usage_split_list[-1])
+                else:
+                    disk_io_app_usage_dict[disk_io_app_usage_split_list[0]] = int(disk_io_app_usage_split_list[-1])
 
             disk_io_app_usage_sorted_tuple = sorted(disk_io_app_usage_dict.items(), key=lambda x: x[1], reverse=True)
             disk_io_app_usage_sorted_list = []
