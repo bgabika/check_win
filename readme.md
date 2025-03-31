@@ -1,7 +1,7 @@
 
 # check_win
 
-COREX Windows host agentless check plugin for Icinga 2, v1.16
+COREX Windows host agentless check plugin for Icinga 2, v1.18
  
 ### Features
  - checks Windows host over SSH
@@ -32,13 +32,15 @@ OK - D (backup) drive usage is 0.26 % (0.13 GB / 50.0 GB).                    |D
 
 ### Version
 
- - v1.16
+ - v1.18
 
 ### ToDo
 
  - waiting for bugs or feature requests (-:
 
 ## Changelog
+ - version v1.18: bugfix: network check failed due to character encoding issues in certain network card names
+ - version v1.17: handle ssh connection
  - version v1.16: bugfix, disk-io check failed when running a service with a space character in the service name.
  - version v1.15: update performance output for disk-usage when drive does not have drive letter e.g. System (boot) or recovery partition.
  - version v1.14: add new feature: disk-io. Checks disk I/O usage and most disk-IO usage processes.

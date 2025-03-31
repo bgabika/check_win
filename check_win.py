@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 # ---------------------------------------------------------------
 # COREX Windows host agentless check plugin for Icinga 2
-# Copyright (C) 2019-2022, Gabor Borsos <bg@corex.bg>
+# Copyright (C) 2019-2025, Gabor Borsos <bg@corex.bg>
 # 
-# v1.16 built on 2024.01.16.
+# v1.18 built on 2025.03.30.
 # usage: check_win.py --help
 #
 # For bugs and feature requests mailto bg@corex.bg
@@ -30,6 +30,7 @@ import sys
 try:
     from enum import Enum
     import argparse
+    import json
     import paramiko
     import re
     import textwrap
@@ -177,8 +178,28 @@ class CheckWin:
             wincommand = """powershell "$CompObject = Get-WmiObject -Class WIN32_OperatingSystem; $CompObject.FreePhysicalMemory; $CompObject.TotalVisibleMemorySize\""""
         
         elif self.options.subcommand == "network":
-            wincommand = """powershell "(Get-CimInstance -Query 'Select BytesReceivedPersec, BytesSentPersec from Win32_PerfFormattedData_Tcpip_NetworkInterface' | Select-Object Name, BytesReceivedPersec, BytesSentPersec) | ft -HideTableHeaders -autosize; (Get-CimInstance win32_networkadapterconfiguration | where {$_.IPAddress -ne $null} | select Description, MACAddress, IPAddress) | ft -HideTableHeaders -autosize\""""
-        
+            # wincommand = """powershell -Command "(Get-CimInstance -Query 'Select Name, BytesReceivedPersec, BytesSentPersec from Win32_PerfFormattedData_Tcpip_NetworkInterface' | Select-Object Name, BytesReceivedPersec, BytesSentPersec | ConvertTo-Json) ; (Get-CimInstance win32_networkadapterconfiguration | where {$_.IPAddress -ne $null} | Select-Object Description, MACAddress, IPAddress | ConvertTo-Json)\""""
+            wincommand = (
+    "powershell -Command "
+    "\""
+    "$perfData = Get-CimInstance -Query 'Select Name, BytesReceivedPersec, BytesSentPersec from Win32_PerfFormattedData_Tcpip_NetworkInterface' | "
+    "    Select-Object Name, BytesReceivedPersec, BytesSentPersec; "
+
+    "$networkConfig = Get-CimInstance win32_networkadapterconfiguration | "
+    "    Where-Object { $_.IPAddress -ne $null } | "
+    "    Select-Object Description, MACAddress, IPAddress; "
+
+    "if ($perfData -or $networkConfig) { "
+    "    $allData = @(); "
+    "    if ($perfData) { $allData += $perfData }; "
+    "    if ($networkConfig) { $allData += $networkConfig }; "
+    "    $allData | ConvertTo-Json -Depth 3 -Compress; "
+    "}"
+    "\""
+)
+
+
+
         elif self.options.subcommand == "procs":
             wincommand = """powershell "(Get-Process).count\""""
         
@@ -195,7 +216,9 @@ class CheckWin:
             wincommand = """powershell "Get-CimInstance -ClassName Win32_OperatingSystem | Select-Object -Property CSName, Caption, Version, InstallDate, LastBootupTime\""""
 
         perfdata = self.run_ssh_command(wincommand, hostname, sshport, sshuser, sshkey)
-        perfdata = (perfdata.strip()).replace(",", ".")
+        # print(f"raw {perfdata}")
+        if self.options.subcommand != "network":
+            perfdata = (perfdata.strip()).replace(",", ".")
         
         return perfdata
 
@@ -221,18 +244,25 @@ class CheckWin:
     def run_ssh_command(self, command, hostname, sshport, sshuser, keyfile, email_rcpt=""):
         ssh_status = self.check_ssh(hostname, sshport, sshuser, keyfile)
         keyfile = paramiko.RSAKey.from_private_key_file(keyfile)
+        output = ""
         if ssh_status == 0:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(hostname, port=sshport, username=sshuser, pkey=keyfile, allow_agent=False, look_for_keys=False, timeout=30, banner_timeout=30, auth_timeout=30)
-            stdin, stdout, stderr = ssh.exec_command(command)
-            stdin.flush()
+            try:
+                ssh.connect(
+                    hostname, port=sshport, username=sshuser, pkey=keyfile,
+                    allow_agent=False, look_for_keys=False, timeout=30, banner_timeout=30, auth_timeout=30
+                )
+                stdin, stdout, stderr = ssh.exec_command(command)
+                stdin.flush()
 
-            stdout = io.TextIOWrapper(stdout, encoding='utf-8', errors='replace')
-            output = (''.join(stdout.readlines()))
+                stdout = io.TextIOWrapper(stdout, encoding='utf-8', errors='replace')
+                output = (''.join(stdout.readlines()))
+            finally:
+                ssh.close()
         else:
             self.output(CheckState.WARNING, f"Cannot run remote command ({command}) on {hostname}, please check ssh connection!")
-            
+        
         return output
 
 
@@ -442,72 +472,78 @@ class CheckWin:
 
     def check_network(self, perfdata, subcommand):
         nic_dict = {}
-        network_details = perfdata.splitlines()
-
-        transfer_speed_list = [x for x in network_details if "{" not in x]
-        transfer_speed_list = list(filter(None, transfer_speed_list))
+        data = json.loads(perfdata)
         
-        for element in transfer_speed_list:
-            transfer_speed = re.findall(r'  [0-9].*[0-9]*$', element)[0]
-            transfer_speed_received_sent_list = transfer_speed.split(" ")
-            transfer_speed_received_sent_list = list(filter(None, transfer_speed_received_sent_list))
-            transfer_speed_received = int(transfer_speed_received_sent_list[0])
-            transfer_speed_sent = int(transfer_speed_received_sent_list[1])
-            adapter_name = ((re.match(r'(.*?)\s\s', element))).group().strip()
-            nic_dict[adapter_name] = [transfer_speed_received, transfer_speed_sent]
+        def fix_encoding(text):
+            if isinstance(text, str):
+                return text.encode("latin1", "ignore").decode("utf-8", "ignore")
+            return text
+
+        for network_adapters in data:
+            if "Name" in network_adapters:
+                adapter_name = network_adapters["Name"]
+            else:
+                adapter_name = network_adapters["Description"]
+            replace_characters = [",", "/", "#", "[", "]", "(", ")", "_", "{", "}"]
+            replace_map = str.maketrans({char: " " for char in replace_characters})
+            adapter_name = adapter_name.translate(replace_map)
+            adapter_name = " ".join(adapter_name.split())
             
-        ip_address_list = [x for x in network_details if "{" in x]
+            if isinstance(adapter_name, str):
+                adapter_name = fix_encoding(adapter_name)
+            elif isinstance(adapter_name, list):
+                adapter_name = [fix_encoding(x) for x in adapter_name]
+            
+            if adapter_name not in nic_dict:
+                nic_dict[adapter_name] = {}
+            
+            if "BytesReceivedPersec" in network_adapters and "MACAddress" not in network_adapters:
+                transfer_speed_received = int(network_adapters["BytesReceivedPersec"])
+                transfer_speed_sent = int(network_adapters["BytesSentPersec"])
+                nic_dict[adapter_name] = {"transfer_speed_received":transfer_speed_received, 
+                                        "transfer_speed_sent": transfer_speed_sent}
+            elif adapter_name in nic_dict and len(nic_dict[adapter_name]) < 2:
+                transfer_speed_received = 0
+                transfer_speed_sent = 0
+                nic_dict[adapter_name] = {"transfer_speed_received":transfer_speed_received, 
+                                        "transfer_speed_sent": transfer_speed_sent}
 
-        for element in ip_address_list:
-            if ":" in element:
-                element_list = element.split(" ")
-
-                if "::" in element_list[-1]:
-                    adapter_name = element_list[0:len(element_list)-3]
-                    ipv6_address = (element_list[-1]).replace("}", "")
-                elif ":" in element_list[-1]:
-                    adapter_name = element_list[0:len(element_list)-3]
-                    ipv6_address = (element_list[-1]).replace("}", "")
-                else:
-                    adapter_name = element_list[0:len(element_list)-2]
-                    ipv6_address = "::"
-                    element_list.append(ipv6_address)
-                
-                adapter_name = ' '.join([str(elem) for elem in adapter_name])
-                adapter_name = (adapter_name.replace("#", "_")).strip()
-                ipv4_address = (element_list[-2]).replace("{", "")
-                mac_address = element_list[-3]
+            if "MACAddress" in network_adapters:
+                mac_address = network_adapters["MACAddress"]
+                nic_dict[adapter_name]["mac_address"] = mac_address
+            
+            if "IPAddress" in network_adapters:
+                ip_address_list = network_adapters["IPAddress"]
+                ipv4_address = ip_address_list[0]
                 
                 try:
-                    nic_dict[adapter_name].append(ipv4_address)
-                    nic_dict[adapter_name].append(ipv6_address)
-                    nic_dict[adapter_name].append(mac_address)
-                except KeyError:
-                    nic_dict[adapter_name] = [transfer_speed_received, transfer_speed_sent, ipv4_address, ipv6_address, mac_address]
+                    ipv6_address = ip_address_list[1]
+                except:
+                    ipv6_address = None
+                nic_dict[adapter_name]["ipv4_address"] = ipv4_address
+                nic_dict[adapter_name]["ipv6_address"] = ipv6_address
         
-
-        for k,v in nic_dict.items():
-            nic_name = k
-            nic_speed_received = round(((int(v[0]))/1024**2),2)
-            nic_speed_sent = round(((int(v[1]))/1024**2),2)
+        for adapter_name,nic_details_list in nic_dict.items():
+            adapter_name_for_graphite = re.sub(r"[^a-zA-Z0-9 ]", "", adapter_name)
+            nic_speed_received = round(((nic_details_list["transfer_speed_received"])/1024**2),2)
+            nic_speed_sent = round(((nic_details_list["transfer_speed_sent"])/1024**2),2)
             try:
-                nic_ipv4_address = v[2]
+                mac_address = nic_details_list["mac_address"]
             except:
-                nic_ipv4_address = "0.0.0.0/0"
-
-            try:
-                nic_ipv6_address = v[3]
-            except:
-                nic_ipv6_address = "::"
+                mac_address = None
             
             try:
-                nic_mac_address = v[4]
+                ipv4_address = nic_details_list["ipv4_address"]
             except:
-                nic_mac_address = "00:00:00:00:00:00"
+                ipv4_address = None
+            
+            try:
+                ipv6_address = nic_details_list["ipv6_address"]
+            except:
+                ipv6_address = None
 
-
-            output = f"{subcommand} usage is {nic_speed_received}/{nic_speed_sent} MB on '{nic_name}' (ip: {nic_ipv4_address}/{nic_ipv6_address}, mac: {nic_mac_address}).\
-                    |'{nic_name}_in'={nic_speed_received}MB;{self.options.threshold_warning};{self.options.threshold_critical};0;; '{nic_name}_out'={nic_speed_sent}MB"
+            output = f"{subcommand} usage is {nic_speed_received}/{nic_speed_sent} MB on '{adapter_name}' (ip: {ipv4_address}/{ipv6_address}, mac: {mac_address}).\
+                    |'{adapter_name_for_graphite}_in'={nic_speed_received}MB;{self.options.threshold_warning};{self.options.threshold_critical};0;; '{adapter_name_for_graphite}_out'={nic_speed_sent}MB;{self.options.threshold_warning};{self.options.threshold_critical};0;;"
             
             if self.options.threshold_critical <= nic_speed_received or self.options.threshold_critical <= nic_speed_sent:
                 self.result_list.append(f"CRITICAL - {output}")
@@ -516,9 +552,8 @@ class CheckWin:
                 self.result_list.append(f"WARNING - {output}")
             elif nic_speed_received < self.options.threshold_warning :
                 self.result_list.append(f"OK - {output}")
-
+        
         return self.result_list
-
 
 
     def check_procs(self, perfdata, subcommand):
